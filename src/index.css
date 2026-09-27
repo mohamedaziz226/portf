@@ -1,0 +1,237 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+   Base — dark premium theme
+   ========================================================================== */
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-base-950 font-sans text-slate-300 antialiased;
+    background-image:
+      radial-gradient(60rem 40rem at 12% -8%, rgba(56, 189, 248, 0.12), transparent 62%),
+      radial-gradient(55rem 38rem at 88% 2%, rgba(139, 92, 246, 0.14), transparent 64%),
+      radial-gradient(48rem 42rem at 50% 108%, rgba(34, 211, 238, 0.08), transparent 66%);
+    background-attachment: fixed;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* `background-attachment: fixed` forces a full repaint on every scroll frame
+     on mobile browsers — fall back to normal scrolling under 768px. */
+  @media (max-width: 767px) {
+    body {
+      background-attachment: scroll;
+    }
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply text-slate-100;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  ::selection {
+    @apply bg-sky-400/30 text-white;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-600/60 bg-clip-content;
+    border: 2px solid transparent;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-sky-400/70 ring-offset-2 ring-offset-base-950;
+  }
+}
+
+/* ==========================================================================
+   Components
+   ========================================================================== */
+@layer components {
+  .container-shell {
+    @apply mx-auto w-full max-w-6xl px-5 sm:px-8;
+  }
+
+  .glass-card {
+    @apply rounded-2xl border border-white/10 bg-white/[0.035] backdrop-blur-xl;
+  }
+
+  /* backdrop-blur is the most expensive filter on mobile GPUs: keep the blur
+     on desktop, use a cheaper solid tint on small screens.
+     (backdrop-filter must be unset explicitly — `backdrop-blur-0` doesn't
+     exist, the correct utility is `backdrop-blur-none`.) */
+  @media (max-width: 767px) {
+    .glass-card {
+      @apply backdrop-blur-none;
+      background-color: rgba(11, 16, 32, 0.72);
+    }
+  }
+
+  .glass-card-hover {
+    @apply transition duration-300 ease-smooth hover:border-white/20 hover:bg-white/[0.06] hover:shadow-glow;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-sky-400 via-indigo-400 to-violet-400 bg-clip-text text-transparent;
+  }
+
+  /* Slowly panning gradient used for the hero headline. */
+  .gradient-text-animated {
+    @apply bg-gradient-to-r from-sky-400 via-violet-400 to-cyan-300 bg-clip-text text-transparent;
+    background-size: 220% 100%;
+    animation: az-gradient-pan 9s ease-in-out infinite;
+  }
+
+  /* On touch devices the pan repaints text every frame — keep it static. */
+  @media (pointer: coarse) {
+    .gradient-text-animated {
+      animation: none;
+    }
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[0.7rem] font-medium uppercase tracking-[0.18em] text-slate-400;
+  }
+
+  .chip {
+    @apply inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-300 transition duration-300 ease-smooth hover:border-sky-400/40 hover:bg-sky-400/10 hover:text-sky-100;
+  }
+
+  .hairline {
+    @apply h-px w-full bg-gradient-to-r from-transparent via-white/10 to-transparent;
+  }
+
+  .surface-grid {
+    @apply bg-grid-lines bg-grid;
+  }
+
+  /* Shine sweep on hover for cards — hover-capable devices only.
+     The fixed pseudo-element repaints on every scroll frame on touch
+     devices, so the effect stays desktop-only. */
+  .card-shine {
+    position: relative;
+    overflow: hidden;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .card-shine::after {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      background: linear-gradient(
+        105deg,
+        transparent 42%,
+        rgba(255, 255, 255, 0.1) 50%,
+        transparent 58%
+      );
+      transform: translateX(-130%);
+      transition: transform 0.9s ease;
+      pointer-events: none;
+    }
+
+    .card-shine:hover::after,
+    .card-shine:focus-within::after {
+      transform: translateX(130%);
+    }
+  }
+
+  /* Image zoom on hover (wrapper) — hover-capable devices only, so touch
+     scrolling never triggers a transform. */
+  .img-zoom img {
+    transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .img-zoom:hover img {
+      transform: scale(1.05);
+    }
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .group:hover .eq-bar {
+      animation: az-eq-bounce 1.1s ease-in-out infinite;
+    }
+  }
+}
+
+/* ==========================================================================
+   Performance — below-the-fold sections
+   ========================================================================== */
+/* Below-the-fold sections opt into content-visibility so the browser can skip
+   layout/paint of off-screen content (huge win on long pages on mobile).
+   `contain-intrinsic-size` reserves space so scrollbars don't jump. */
+.below-fold {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1200px;
+}
+
+/* ==========================================================================
+   Keyframes used by raw CSS rules above
+   ========================================================================== */
+@keyframes az-gradient-pan {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes az-eq-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* ==========================================================================
+   Accessibility — respect prefers-reduced-motion
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
