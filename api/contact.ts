@@ -17,6 +17,15 @@
  *   CONTACT_FROM_EMAIL  — verified sender, defaults to Resend's test sender
  */
 
+import {
+  BodyTooLargeError,
+  isWebRequest,
+  sendWebResponse,
+  toWebRequest,
+  type NodeLikeRequest,
+  type NodeLikeResponse,
+} from "./_node-bridge";
+
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
 /**
@@ -374,9 +383,45 @@ export async function handleContactRequest(request: Request): Promise<Response> 
 }
 
 /**
- * Vercel entry point (its Node 18+ runtime natively supports the Web signature).
- * The named export above is reused by the Vite dev/preview middleware.
+ * Vercel entry point — supports BOTH calling conventions.
+ *
+ * Vercel's Node runtime invokes a function with Node's `(req, res)` pair, while
+ * this project is written against the Web `Request` → `Response` signature (also
+ * used by the Vite dev middleware). Handing a Node request straight to a Web
+ * handler crashes the invocation (`FUNCTION_INVOCATION_FAILED`), so the entry
+ * point detects the convention and adapts. Detection is by shape, which keeps
+ * the function portable across Node runtimes, the Edge runtime and local tests.
  */
-export default async function handler(request: Request): Promise<Response> {
-  return handleContactRequest(request);
+export default async function handler(
+  input: Request | NodeLikeRequest,
+  nodeResponse?: NodeLikeResponse,
+): Promise<Response | void> {
+  // Web runtime (Edge, or a runtime configured for the Fetch signature).
+  if (nodeResponse === undefined && isWebRequest(input)) {
+    return handleContactRequest(input);
+  }
+
+  // Node runtime: adapt, run, write back.
+  if (!nodeResponse) {
+    return json({ ok: false, error: "internal_error" }, 500);
+  }
+
+  try {
+    const nodeRequest = input as NodeLikeRequest;
+    const rawHost = nodeRequest.headers.host;
+    const host = `https://${(Array.isArray(rawHost) ? rawHost[0] : rawHost) || "localhost"}`;
+    const webRequest = await toWebRequest(nodeRequest, { maxBytes: MAX_BODY_BYTES, host });
+    await sendWebResponse(await handleContactRequest(webRequest), nodeResponse);
+  } catch (error) {
+    // An oversized payload is an expected outcome, not an incident: no stack noise.
+    const tooLarge = error instanceof BodyTooLargeError;
+    if (!nodeResponse.headersSent) {
+      if (tooLarge) {
+        await sendWebResponse(json({ ok: false, error: "payload_too_large" }, 413), nodeResponse);
+      } else {
+        console.error("[contact] invocation failed:", error);
+        await sendWebResponse(json({ ok: false, error: "internal_error" }, 500), nodeResponse);
+      }
+    }
+  }
 }

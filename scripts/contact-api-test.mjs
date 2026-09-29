@@ -58,6 +58,9 @@ const vite = await createServer({
 });
 
 const { handleContactRequest } = await vite.ssrLoadModule("/api/contact.ts");
+/** Default export = the real Vercel entry point, exercised in both conventions. */
+const contactEntry = (await vite.ssrLoadModule("/api/contact.ts")).default;
+const healthEntry = (await vite.ssrLoadModule("/api/health.ts")).default;
 await vite.listen();
 
 const baseUrl = vite.resolvedUrls?.local?.[0] ?? "http://127.0.0.1:5173/";
@@ -368,6 +371,110 @@ section("Health check — GET /api/health");
       brokenBody.ok === false &&
       brokenBody.config?.missing?.includes("RESEND_API_KEY"),
     `status ${broken.status}`,
+  );
+}
+
+/* ------------------- Vercel entry point (both signatures) ------------------ */
+
+section("Vercel entry point — Node (req, res) and Web Request");
+
+/** Minimal Node IncomingMessage/ServerResponse pair, as Vercel's runtime supplies. */
+function nodePair({ method = "POST", headers = {}, body = "", ip = "203.0.113.9" } = {}) {
+  const listeners = new Map();
+  const written = { status: 0, headers: {}, body: "" };
+
+  const request = {
+    method,
+    url: "/api/contact",
+    headers: { host: "portfolio.vercel.app", "content-type": "application/json", ...headers },
+    socket: { remoteAddress: ip },
+    on(event, listener) {
+      listeners.set(event, listener);
+      return request;
+    },
+  };
+
+  const response = {
+    statusCode: 0,
+    headersSent: false,
+    setHeader(name, value) {
+      written.headers[name.toLowerCase()] = value;
+    },
+    end(chunk) {
+      written.body = chunk ? Buffer.from(chunk).toString("utf8") : "";
+      written.status = this.statusCode;
+      this.headersSent = true;
+    },
+  };
+
+  // Emit the body asynchronously, like a real socket would.
+  const feed = async () => {
+    listeners.get("data")?.(Buffer.from(body));
+    listeners.get("end")?.();
+  };
+
+  return { request, response, written, feed };
+}
+
+{
+  // 1. Node signature: the exact shape that caused FUNCTION_INVOCATION_FAILED.
+  sentEmails = [];
+  const node = nodePair({ body: JSON.stringify(validPayload({ subject: "Node signature" })) });
+  const pending = contactEntry(node.request, node.response);
+  await node.feed();
+  await pending;
+  const nodeBody = JSON.parse(node.written.body || "{}");
+  check(
+    "Node (req, res) → 200 { ok: true }",
+    node.written.status === 200 && nodeBody.ok === true,
+    `status ${node.written.status}`,
+  );
+  check("Node signature actually delivered to Resend", sentEmails.length === 1);
+  check(
+    "Node signature sets the JSON content type",
+    (node.written.headers["content-type"] ?? "").includes("application/json"),
+  );
+
+  // 2. Web signature: a plain Request with no second argument.
+  sentEmails = [];
+  const webResponse = await contactEntry(
+    new Request("http://localhost/api/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-forwarded-for": "203.0.113.10" },
+      body: JSON.stringify(validPayload({ subject: "Web signature" })),
+    }),
+  );
+  check(
+    "Web Request → 200 { ok: true }",
+    webResponse.status === 200 && (await webResponse.json()).ok === true,
+    `status ${webResponse.status}`,
+  );
+  check("Web signature actually delivered to Resend", sentEmails.length === 1);
+
+  // 3. Node signature must still enforce the protocol (405 on GET).
+  const wrongMethod = nodePair({ method: "GET" });
+  const wrongPending = contactEntry(wrongMethod.request, wrongMethod.response);
+  await wrongMethod.feed();
+  await wrongPending;
+  check("Node GET → 405", wrongMethod.written.status === 405, `status ${wrongMethod.written.status}`);
+
+  // 4. Oversized body through the Node path → 413, not a crash.
+  const huge = nodePair({ body: JSON.stringify(validPayload({ message: "x".repeat(64 * 1024) })) });
+  const hugePending = contactEntry(huge.request, huge.response);
+  await huge.feed();
+  await hugePending;
+  check("Node body over 32 KB → 413", huge.written.status === 413, `status ${huge.written.status}`);
+
+  // 5. Health endpoint answers under the Node signature too.
+  const healthNode = nodePair({ method: "GET" });
+  healthNode.request.url = "/api/health";
+  const healthPending = healthEntry(healthNode.request, healthNode.response);
+  await healthNode.feed();
+  await healthPending;
+  check(
+    "Node GET /api/health → 200 { ok: true }",
+    healthNode.written.status === 200 && JSON.parse(healthNode.written.body).ok === true,
+    `status ${healthNode.written.status}`,
   );
 }
 

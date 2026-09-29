@@ -10,12 +10,19 @@
  * Open https://<your-domain>/api/health in a browser after deploying.
  */
 import { getConfigStatus } from "./contact";
+import {
+  BodyTooLargeError,
+  isWebRequest,
+  sendWebResponse,
+  type NodeLikeRequest,
+  type NodeLikeResponse,
+} from "./_node-bridge";
 
-export default function handler(): Response {
+/** Body of the diagnostic, shared by both calling conventions. */
+function healthPayload() {
   const status = getConfigStatus();
-
-  return new Response(
-    JSON.stringify(
+  return {
+    body: JSON.stringify(
       {
         ok: status.configured,
         service: "portfolio-contact-api",
@@ -27,13 +34,59 @@ export default function handler(): Response {
       null,
       2,
     ),
-    {
-      status: status.configured ? 200 : 503,
+    status: status.configured ? 200 : 503,
+  };
+}
+
+/**
+ * Accepts both the Node `(req, res)` pair and a Web `Request`, so the endpoint
+ * answers the same way on every runtime (see `./_node-bridge`).
+ */
+export default async function handler(
+  input: Request | NodeLikeRequest,
+  nodeResponse?: NodeLikeResponse,
+): Promise<Response | void> {
+  if (nodeResponse === undefined && isWebRequest(input)) {
+    const payload = healthPayload();
+    return new Response(payload.body, {
+      status: payload.status,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
       },
-    },
-  );
+    });
+  }
+
+  if (!nodeResponse) {
+    return new Response(JSON.stringify({ ok: false, error: "internal_error" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    });
+  }
+
+  try {
+    const payload = healthPayload();
+    await sendWebResponse(
+      new Response(payload.body, {
+        status: payload.status,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      }),
+      nodeResponse,
+    );
+  } catch (error) {
+    const tooLarge = error instanceof BodyTooLargeError;
+    if (!nodeResponse.headersSent) {
+      nodeResponse.statusCode = tooLarge ? 413 : 500;
+      nodeResponse.setHeader("Content-Type", "application/json; charset=utf-8");
+      nodeResponse.end(
+        JSON.stringify({ ok: false, error: tooLarge ? "payload_too_large" : "internal_error" }),
+      );
+    }
+    if (!tooLarge) console.error("[health] invocation failed:", error);
+  }
 }
