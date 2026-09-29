@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "description": "Portfolio of Mohamed Aziz Zairi — AI & Full-Stack Engineer (Telecommunications Engineering student at ENET'Com).",
   "scripts": {
     "dev": "vite",
