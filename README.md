@@ -168,9 +168,39 @@ sont lus **uniquement côté serveur**.
 
 Côté serveur : validation + longueurs maximales, honeypot anti-spam, 5 envois / 10 min / IP,
 codes HTTP explicites (400 · 405 · 413 · 415 · 429 · 500 · 502), `Reply-To` = email du visiteur et
-horodatage inclus dans l'email. Déploiement : l'hébergeur doit exécuter du Node — le dossier `api/`
-est pris en charge tel quel par Vercel. Sur un hébergeur 100 % statique (GitHub Pages…), pointez
+horodatage inclus dans l'email. Sur un hébergeur 100 % statique (GitHub Pages…), pointez
 `VITE_CONTACT_ENDPOINT` vers un service externe (Formspree…).
+
+#### Déploiement sur Vercel (les 2 étapes obligatoires)
+
+Le fichier `.env` est **git-ignoré** : il n'est jamais poussé sur GitHub, donc Vercel ne reçoit
+**aucune** variable d'environnement et le formulaire répond `500 server_misconfigured`
+ (« Unable to send your message ») même si tout fonctionne en local.
+
+1. **Renseigner les variables dans Vercel** (indispensable) :
+   `vercel.com` → votre projet → **Settings → Environment Variables** → ajoutez :
+   - `RESEND_API_KEY` = votre clé (https://resend.com/api-keys)
+   - `CONTACT_EMAIL` = la boîte qui reçoit les messages
+   - `CONTACT_FROM_EMAIL` *(optionnel)* = `Portfolio <contact@votre-domaine.com>`
+
+   Cochez **Production**, **Preview** et **Development**, puis **redéployez** (les variables ne
+   s'appliquent qu'aux déploiement suivants). Ne mettez **jamais** de `VITE_` devant ces noms :
+   elles resteraient visibles dans le bundle.
+
+2. **Vérifier le déploiement** : ouvrez `https://<votre-domaine>/api/health`.
+   - `200` + `"configured": true` → la configuration est bonne, le formulaire fonctionne.
+   - `503` + la liste des variables manquantes → ajoutez-les puis redéployez.
+   - `404` → la fonction n'est pas déployée : vérifiez que le dossier `api/` est bien à la racine
+     du dépôt et que le projet est configuré sur le preset **Vite**.
+
+Si `/api/health` renvoie `200` mais que l'envoi échoue encore, ouvrez **Vercel → Logs** et
+cherchez `[contact] Resend responded …` : le code HTTP de Resend y est indiqué (401 = clé
+invalide, 403 = `onboarding@resend.dev` utilisé vers une adresse qui n'est pas celle du compte →
+vérifiez un domaine sur https://resend.com/domains puis renseignez `CONTACT_FROM_EMAIL`).
+
+`vercel.json` (racine) fixe le runtime Node des fonctions, le dossier de sortie `dist` et une
+réécriture SPA qui **exclut `/api/`** — sans elle, la route peut être renvoyée vers `index.html`
+et produire un 404 au lieu de la réponse JSON.
 
 
 ---

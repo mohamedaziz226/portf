@@ -62,6 +62,7 @@ await vite.listen();
 
 const baseUrl = vite.resolvedUrls?.local?.[0] ?? "http://127.0.0.1:5173/";
 const httpEndpoint = new URL("api/contact", baseUrl).href;
+const healthEndpoint = new URL("api/health", baseUrl).href;
 
 /** Calls the handler directly, with an isolated rate-limit bucket per IP. */
 function callHandler(payload, options = {}) {
@@ -334,6 +335,40 @@ section("HTTP layer — Vite dev middleware");
 
   const wrongMethod = await globalThis.fetch(httpEndpoint);
   check("HTTP GET → 405", wrongMethod.status === 405, `status ${wrongMethod.status}`);
+}
+
+/* --------------------------- Health check ---------------------------------- */
+
+section("Health check — GET /api/health");
+{
+  const configured = await globalThis.fetch(healthEndpoint);
+  const configuredBody = await configured.json();
+  check(
+    "configured server → 200 { ok: true }",
+    configured.status === 200 && configuredBody.ok === true,
+    `status ${configured.status}`,
+  );
+  check(
+    "reports 1 recipient and the test sender",
+    configuredBody.config?.recipientCount === 1 && configuredBody.config?.usingTestSender === true,
+  );
+  check(
+    "never leaks the API key or the env values",
+    !JSON.stringify(configuredBody).includes(KEY) && !JSON.stringify(configuredBody).includes(TO),
+  );
+
+  // Mirror the production `api/health.ts`: 503 + the list of missing variables.
+  delete process.env.RESEND_API_KEY;
+  const broken = await globalThis.fetch(healthEndpoint);
+  const brokenBody = await broken.json();
+  process.env.RESEND_API_KEY = KEY;
+  check(
+    "missing RESEND_API_KEY → 503 naming the variable",
+    broken.status === 503 &&
+      brokenBody.ok === false &&
+      brokenBody.config?.missing?.includes("RESEND_API_KEY"),
+    `status ${broken.status}`,
+  );
 }
 
 /* --------------------------- Teardown ------------------------------------- */

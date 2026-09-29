@@ -8,9 +8,10 @@
  */
 import { loadEnv, type Connect, type Plugin } from "vite";
 
-import { MAX_BODY_BYTES, handleContactRequest } from "../api/contact";
+import { MAX_BODY_BYTES, getConfigStatus, handleContactRequest } from "../api/contact";
 
 const ROUTE = "/api/contact";
+const HEALTH_ROUTE = "/api/health";
 
 /** Loads `.env*` for the current mode without clobbering real process env (CI, prod). */
 function applyEnv(root: string, mode: string): void {
@@ -94,6 +95,23 @@ function createHandler(): Connect.NextHandleFunction {
   };
 }
 
+/** Read-only diagnostic mirroring `api/health.ts` (same shape as production). */
+function createHealthHandler(): Connect.NextHandleFunction {
+  return function contactHealth(_req, res) {
+    const status = getConfigStatus();
+    res.statusCode = status.configured ? 200 : 503;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.end(
+      JSON.stringify(
+        { ok: status.configured, service: "portfolio-contact-api", config: status },
+        null,
+        2,
+      ),
+    );
+  };
+}
+
 export function contactApiPlugin(): Plugin {
   let root = process.cwd();
   let mode = "development";
@@ -107,10 +125,12 @@ export function contactApiPlugin(): Plugin {
     },
     configureServer(server) {
       applyEnv(root, mode);
+      server.middlewares.use(HEALTH_ROUTE, createHealthHandler());
       server.middlewares.use(ROUTE, createHandler());
     },
     configurePreviewServer(server) {
       applyEnv(root, mode);
+      server.middlewares.use(HEALTH_ROUTE, createHealthHandler());
       server.middlewares.use(ROUTE, createHandler());
     },
   };

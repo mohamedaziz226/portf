@@ -80,6 +80,36 @@ const STATUS_MESSAGES: Record<Exclude<SubmitStatus, "idle">, string> = {
   error: "Unable to send your message. Please try again.",
 };
 
+/**
+ * Visitor-facing explanation for the failure codes returned by `api/contact.ts`.
+ * Keeps the message actionable (retry later / email instead) instead of a dead end.
+ */
+const FAILURE_HINTS: Record<string, string> = {
+  rate_limited: "Too many messages sent from this device. Please try again later.",
+  server_misconfigured: "The contact service is not configured yet. Please email me directly.",
+  upstream_error: "The email service is temporarily unavailable. Please email me directly.",
+  payload_too_large: "Your message is too long. Please shorten it and try again.",
+  not_found: "The contact service is unavailable. Please email me directly.",
+};
+
+/**
+ * Extracts the machine error code (`{ ok: false, error: "..." }`) from a failed
+ * response so the visitor gets an actionable message. Tolerates a missing or
+ * non-JSON body (e.g. an HTML 404 page from a misrouted rewrite) and never throws.
+ */
+async function readErrorCode(response: Response): Promise<string> {
+  try {
+    const body: unknown = await response.json();
+    if (body && typeof body === "object" && "error" in body) {
+      const code = (body as { error: unknown }).error;
+      if (typeof code === "string") return code;
+    }
+  } catch {
+    // No JSON body — fall through to the generic message.
+  }
+  return "unknown";
+}
+
 const FIELD_CLASSES =
   "w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 transition duration-300 ease-smooth focus:border-sky-400/50 focus:bg-white/[0.05] focus:outline-none";
 
@@ -87,6 +117,8 @@ export function Contact() {
   const [values, setValues] = useState<FormValues>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof FormValues, string>>>({});
   const [status, setStatus] = useState<SubmitStatus>("idle");
+  /** Human-readable reason of the last failure (from the API error code), if any. */
+  const [failureHint, setFailureHint] = useState<string | null>(null);
   /** Spam trap: humans never see it, naive bots fill it (dropped by `api/contact.ts`). */
   const [honeypot, setHoneypot] = useState("");
   /** Ref guard so a second click during the request cannot open a second submission. */
@@ -104,6 +136,7 @@ export function Contact() {
     setValues((previous) => ({ ...previous, [name]: value }));
     setErrors((previous) => ({ ...previous, [name]: undefined }));
     if (status !== "idle") setStatus("idle");
+    if (failureHint) setFailureHint(null);
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -122,6 +155,10 @@ export function Contact() {
 
     inFlight.current = true;
     setStatus("sending");
+    setFailureHint(null);
+
+    /** Tracked locally: the state value is stale inside this closure. */
+    let hint: string | null = null;
 
     try {
       const response = await fetch(CONTACT_ENDPOINT, {
@@ -137,7 +174,14 @@ export function Contact() {
         }),
       });
 
-      if (!response.ok) throw new Error(`Contact endpoint responded with ${response.status}`);
+      if (!response.ok) {
+        // A 404 usually means the serverless function is not deployed under /api,
+        // or the SPA rewrite swallowed the route — the JSON body may not even exist.
+        const code = response.status === 404 ? "not_found" : await readErrorCode(response);
+        hint = FAILURE_HINTS[code] ?? STATUS_MESSAGES.error;
+        setFailureHint(hint);
+        throw new Error(`Contact endpoint responded with ${response.status} (${code})`);
+      }
 
       // Reset only once the message really went through.
       setValues(EMPTY_FORM);
@@ -145,6 +189,8 @@ export function Contact() {
       setErrors({});
       setStatus("sent");
     } catch (error) {
+      // A network/CORS failure never reaches the API: fall back to the generic hint.
+      if (hint === null) setFailureHint(STATUS_MESSAGES.error);
       console.error("Contact form submission failed:", error);
       setStatus("error");
     } finally {
@@ -387,8 +433,22 @@ export function Contact() {
               >
                 {status === "idle"
                   ? "I read every message — expect an answer within a couple of days."
-                  : STATUS_MESSAGES[status]}
+                  : (failureHint ?? STATUS_MESSAGES[status])}
               </p>
+
+              {/* Never leave the visitor stuck: always offer a direct email fallback. */}
+              {status === "error" && emailConfigured && (
+                <a
+                  href={mailtoLink(
+                    profile.contact.email,
+                    `Portfolio enquiry: ${values.subject || "Contact"}`,
+                    `Name: ${values.name}\n\n${values.message}`,
+                  )}
+                  className="text-xs font-medium text-sky-300 underline underline-offset-4 transition hover:text-sky-200"
+                >
+                  Send it as an email instead
+                </a>
+              )}
             </div>
           </form>
         </Reveal>

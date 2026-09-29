@@ -157,21 +157,49 @@ function validatePayload(payload: unknown): { data: ContactFields } | { errors: 
   return Object.keys(errors).length > 0 ? { errors } : { data };
 }
 
-/** Reads the server-side configuration. Never logged, never returned to the client. */
-function readConfig():
-  { apiKey: string; recipients: string[]; from: string } | { missing: string[] } {
+/** Reads the raw server-side configuration and reports what is missing. */
+function readEnvConfig() {
   const apiKey = (process.env.RESEND_API_KEY ?? "").trim();
   const recipients = (process.env.CONTACT_EMAIL ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  const from = (process.env.CONTACT_FROM_EMAIL ?? "").trim() || DEFAULT_FROM;
+  /** Empty when the sender is not customised → Resend's shared test sender is used. */
+  const customFrom = (process.env.CONTACT_FROM_EMAIL ?? "").trim();
 
   const missing: string[] = [];
   if (!apiKey) missing.push("RESEND_API_KEY");
   if (recipients.length === 0) missing.push("CONTACT_EMAIL");
 
+  return { apiKey, recipients, from: customFrom || DEFAULT_FROM, customFrom, missing };
+}
+
+/** Reads the server-side configuration. Never logged, never returned to the client. */
+function readConfig():
+  | { apiKey: string; recipients: string[]; from: string }
+  | { missing: string[] } {
+  const { apiKey, recipients, from, missing } = readEnvConfig();
   return missing.length > 0 ? { missing } : { apiKey, recipients, from };
+}
+
+/**
+ * Non-secret snapshot of the deployment configuration, used by `GET /api/health`
+ * to make a misconfigured production deploy diagnosable. Only the *presence* of
+ * the variables is reported — never their values, never the API key itself.
+ */
+export function getConfigStatus(): {
+  configured: boolean;
+  missing: string[];
+  recipientCount: number;
+  usingTestSender: boolean;
+} {
+  const { recipients, customFrom, missing } = readEnvConfig();
+  return {
+    configured: missing.length === 0,
+    missing,
+    recipientCount: recipients.length,
+    usingTestSender: customFrom === "",
+  };
 }
 
 /** Builds the subject + text + HTML body of the notification email. */
